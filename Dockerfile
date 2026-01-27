@@ -4,9 +4,23 @@ ENV GOPRIVATE=""
 ENV GOPROXY=direct
 ENV GOINSECURE="*"
 
+# Set to 1 to disable TLS verification for git HTTPS calls during `go mod download`.
+# Prefer supplying your Zscaler root CA instead, but this is a pragmatic escape hatch.
+ARG INSECURE_SSL=0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    git \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY go.mod go.sum* ./
-RUN go mod download
+RUN if [ "$INSECURE_SSL" = "1" ]; then \
+        git config --global http.sslVerify false; \
+        export GIT_SSL_NO_VERIFY=1; \
+    fi \
+    && go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o prmate main.go
 
