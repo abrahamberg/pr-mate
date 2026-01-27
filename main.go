@@ -1,79 +1,64 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"log"
-	"math/rand"
 	"os"
+	"os/signal"
+	"syscall"
 
-	copilot "github.com/github/copilot-sdk/go"
+	"prmate/internal/config"
+	"prmate/internal/copilot"
+	"prmate/internal/handlers"
+	"prmate/internal/server"
+	"prmate/internal/weather"
 )
 
-type WeatherParams struct {
-	City string `json:"city" jsonschema:"The city name"`
-}
-
-// Define the return type
-type WeatherResult struct {
-	City        string `json:"city"`
-	Temperature string `json:"temperature"`
-	Condition   string `json:"condition"`
-}
-
 func main() {
+	// Load configuration
+	cfg := config.Load()
 
-	getWeather := copilot.DefineTool(
-		"get_weather",
-		"Get the current weather for a city",
-		func(params WeatherParams, inv copilot.ToolInvocation) (WeatherResult, error) {
-			// In a real app, you'd call a weather API here
-			conditions := []string{"sunny", "cloudy", "rainy", "partly cloudy"}
-			temp := rand.Intn(30) + 50
-			condition := conditions[rand.Intn(len(conditions))]
-			return WeatherResult{
-				City:        params.City,
-				Temperature: fmt.Sprintf("%d°F", temp),
-				Condition:   condition,
-			}, nil
-		},
-	)
-
-	client := copilot.NewClient(nil)
-	if err := client.Start(); err != nil {
-		log.Fatal(err)
+	// Initialize services
+	copilotSvc := copilot.NewService(cfg.CopilotModel)
+	if err := copilotSvc.Start(); err != nil {
+		log.Fatalf("Failed to start copilot service: %v", err)
 	}
-	defer client.Stop()
+	defer copilotSvc.Stop()
 
-	session, err := client.CreateSession(&copilot.SessionConfig{
-		Model:     "gpt-5-mini",
-		Streaming: true,
-		Tools:     []copilot.Tool{getWeather}})
+	weatherSvc := weather.NewService()
 
-	if err != nil {
-		log.Fatal(err)
-	}
+	// Setup HTTP server
+	srv := server.NewServer(cfg)
+	handler := handlers.NewHandler(copilotSvc, weatherSvc)
 
-	// response, err := session.SendAndWait(copilot.MessageOptions{Prompt: "What is 2 + 2?"}, 0)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	// Register routes
+	srv.Router().GET("/health", handler.Health)
+	srv.Router().POST("/api/weather-joke", handler.WeatherJoke)
 
-	// fmt.Println(*response.Data.Content)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.Start()
+	}()
 
-	// Listen for response chunks
-	session.On(func(event copilot.SessionEvent) {
-		if event.Type == "assistant.message_delta" {
-			fmt.Print(*event.Data.DeltaContent)
+	// Wait for interrupt signal for graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	select {
+	case <-quit:
+		log.Println("Shutdown signal received")
+	case err := <-errCh:
+		if err != nil {
+			log.Printf("Server error: %v", err)
 		}
-		if event.Type == "session.idle" {
-			fmt.Println()
-		}
-	})
-
-	_, err = session.SendAndWait(copilot.MessageOptions{Prompt: "tell me how is the wather for Stockholm and then make a joke based on that wather"}, 0)
-	if err != nil {
-		log.Fatal(err)
 	}
 
-	os.Exit(0)
+	// Graceful shutdown with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("Server forced to shutdown: %v", err)
+	}
+
+	log.Println("Server exited")
 }
