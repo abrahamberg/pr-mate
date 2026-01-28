@@ -10,8 +10,10 @@ import (
 	"prmate/internal/config"
 	"prmate/internal/copilot"
 	"prmate/internal/handlers"
+	"prmate/internal/prworkspace"
 	"prmate/internal/server"
 	"prmate/internal/weather"
+	"prmate/internal/webhook"
 )
 
 func main() {
@@ -26,10 +28,13 @@ func main() {
 	defer copilotSvc.Stop()
 
 	weatherSvc := weather.NewService()
+	prWorkspaceMgr := prworkspace.NewManager(cfg.WorkBaseDir)
+	webhookProc := webhook.NewProcessor(prWorkspaceMgr)
+	webhookAsync := webhook.NewAsyncProcessor(webhookProc, webhook.AsyncConfig{QueueSize: cfg.WebhookQueueSize, Workers: cfg.WebhookWorkers})
 
 	// Setup HTTP server
 	srv := server.NewServer(cfg)
-	handler := handlers.NewHandler(copilotSvc, weatherSvc, cfg.WebhookSecret)
+	handler := handlers.NewHandler(copilotSvc, weatherSvc, webhookAsync, cfg.WebhookSecret)
 
 	// Register routes
 	srv.Router().GET("/health", handler.Health)
@@ -59,6 +64,10 @@ func main() {
 
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("Server forced to shutdown: %v", err)
+	}
+
+	if err := webhookAsync.Stop(ctx); err != nil {
+		log.Printf("Webhook processor shutdown error: %v", err)
 	}
 
 	log.Println("Server exited")

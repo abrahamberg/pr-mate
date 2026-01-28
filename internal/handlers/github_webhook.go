@@ -30,35 +30,16 @@ func (h *Handler) GitHubWebhook(c *gin.Context) {
 		return
 	}
 
-	event, err := github.ParseWebHook(eventType, payload)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported webhook event", "event_type": eventType, "details": err.Error()})
+	if h.webhookProc == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "webhook processor not configured"})
 		return
 	}
 
-	summary := gin.H{"event_type": eventType, "delivery_id": deliveryID}
-
-	switch e := event.(type) {
-	case *github.PingEvent:
-		log.Printf("github webhook ping delivery=%s", deliveryID)
-		if e.GetHookID() != 0 {
-			summary["hook_id"] = e.GetHookID()
-		}
-	case *github.PullRequestEvent:
-		summary["action"] = e.GetAction()
-		summary["repo"] = e.GetRepo().GetFullName()
-		summary["pr_number"] = e.GetPullRequest().GetNumber()
-	case *github.IssuesEvent:
-		summary["action"] = e.GetAction()
-		summary["repo"] = e.GetRepo().GetFullName()
-		summary["issue_number"] = e.GetIssue().GetNumber()
-	case *github.PushEvent:
-		summary["repo"] = e.GetRepo().GetName()
-		summary["ref"] = e.GetRef()
-		summary["commits"] = len(e.Commits)
-	default:
-		log.Printf("github webhook event=%s delivery=%s", eventType, deliveryID)
+	if err := h.webhookProc.Enqueue(req.Context(), eventType, payload, deliveryID); err != nil {
+		log.Printf("webhook enqueue failed event=%s delivery=%s err=%v", eventType, deliveryID, err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "webhook queue full"})
+		return
 	}
 
-	c.JSON(http.StatusOK, summary)
+	c.Status(http.StatusAccepted)
 }
