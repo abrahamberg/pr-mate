@@ -10,6 +10,7 @@ type Config struct {
 	Port            string
 	GinMode         string
 	CopilotModel    string
+	WebhookSecret   string
 	ShutdownTimeout time.Duration
 	ReadTimeout     time.Duration
 	WriteTimeout    time.Duration
@@ -33,10 +34,13 @@ func Load() *Config {
 		copilotModel = "gpt-5-mini"
 	}
 
+	webhookSecret := os.Getenv("WEBHOOK_SECRET")
+
 	return &Config{
 		Port:            port,
 		GinMode:         ginMode,
 		CopilotModel:    copilotModel,
+		WebhookSecret:   webhookSecret,
 		ShutdownTimeout: 10 * time.Second,
 		ReadTimeout:     15 * time.Second,
 		WriteTimeout:    15 * time.Second,

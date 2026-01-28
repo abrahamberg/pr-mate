@@ -16,12 +16,14 @@ type WeatherGetter interface {
 type Handler struct {
 	copilotService JokeGenerator
 	weatherService WeatherGetter
+	webhookSecret  string
 }
 
 // NewHandler creates a new handler instance
-func NewHandler(copilotSvc JokeGenerator, weatherSvc WeatherGetter) *Handler {
+func NewHandler(copilotSvc JokeGenerator, weatherSvc WeatherGetter, webhookSecret string) *Handler {
 	return &Handler{
 		copilotService: copilotSvc,
 		weatherService: weatherSvc,
+		webhookSecret:  webhookSecret,
 	}
 }

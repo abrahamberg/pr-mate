@@ -29,11 +29,12 @@ func main() {
 
 	// Setup HTTP server
 	srv := server.NewServer(cfg)
-	handler := handlers.NewHandler(copilotSvc, weatherSvc)
+	handler := handlers.NewHandler(copilotSvc, weatherSvc, cfg.WebhookSecret)
 
 	// Register routes
 	srv.Router().GET("/health", handler.Health)
 	srv.Router().POST("/api/weather-joke", handler.WeatherJoke)
+	srv.Router().POST("/webhook", handler.GitHubWebhook)
 
 	errCh := make(chan error, 1)
 	go func() {

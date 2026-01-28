@@ -25,27 +25,7 @@ PRMate is a Go web application that receives GitHub webhooks and processes them 
 - **Interface Usage**: Define interfaces for testability and flexibility
 - **Context Propagation**: Pass context for cancellation and timeouts
 
-## Project Structure
 
-```
-prmate/
-├── main.go                      # Application entry point
-├── internal/
-│   ├── config/                  # Configuration management
-│   │   └── config.go
-│   ├── server/                  # HTTP server setup
-│   │   └── server.go
-│   ├── webhook/                 # Webhook handling
-│   │   ├── handler.go           # HTTP handlers
-│   │   ├── types.go             # Payload types
-│   │   └── validation.go        # Signature validation
-│   └── copilot/                 # Copilot SDK integration
-│       ├── service.go           # Copilot client management
-│       └── analyzer.go          # Analysis logic
-├── Dockerfile
-├── entrypoint.sh
-└── go.mod
-```
 
 ## Key Components
 
