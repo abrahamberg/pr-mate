@@ -10,6 +10,7 @@ type Config struct {
 	Port             string
 	GinMode          string
 	CopilotModel     string
+	GitHubToken      string
 	WebhookSecret    string
 	WorkBaseDir      string
 	WebhookQueueSize int
@@ -38,6 +39,7 @@ func Load() *Config {
 	}
 
 	webhookSecret := os.Getenv("WEBHOOK_SECRET")
+	githubToken := os.Getenv("GITHUB_TOKEN")
 
 	workBaseDir := os.Getenv("PR_WORK_BASE_DIR")
 	if workBaseDir == "" {
@@ -62,6 +64,7 @@ func Load() *Config {
 		Port:             port,
 		GinMode:          ginMode,
 		CopilotModel:     copilotModel,
+		GitHubToken:      githubToken,
 		WebhookSecret:    webhookSecret,
 		WorkBaseDir:      workBaseDir,
 		WebhookQueueSize: webhookQueueSize,

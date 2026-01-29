@@ -9,8 +9,10 @@ import (
 
 	"prmate/internal/config"
 	"prmate/internal/copilot"
+	"prmate/internal/github"
 	"prmate/internal/handlers"
 	"prmate/internal/prworkspace"
+	"prmate/internal/scan"
 	"prmate/internal/server"
 	"prmate/internal/weather"
 	"prmate/internal/webhook"
@@ -20,16 +22,21 @@ func main() {
 	// Load configuration
 	cfg := config.Load()
 
-	// Initialize services
+	// Initialize Copilot service
 	copilotSvc := copilot.NewService(cfg.CopilotModel)
 	if err := copilotSvc.Start(); err != nil {
 		log.Fatalf("Failed to start copilot service: %v", err)
 	}
 	defer copilotSvc.Stop()
 
+	// Initialize GitHub client
+	githubClient := github.NewClient(cfg.GitHubToken)
+
+	// Initialize services
 	weatherSvc := weather.NewService()
 	prWorkspaceMgr := prworkspace.NewManager(cfg.WorkBaseDir)
-	webhookProc := webhook.NewProcessor(prWorkspaceMgr)
+	scanSvc := scan.NewService(githubClient)
+	webhookProc := webhook.NewProcessor(prWorkspaceMgr, scanSvc, githubClient)
 	webhookAsync := webhook.NewAsyncProcessor(webhookProc, webhook.AsyncConfig{QueueSize: cfg.WebhookQueueSize, Workers: cfg.WebhookWorkers})
 
 	// Setup HTTP server
