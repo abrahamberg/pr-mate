@@ -19,6 +19,11 @@ type Config struct {
 	ReadTimeout      time.Duration
 	WriteTimeout     time.Duration
 	IdleTimeout      time.Duration
+	// LLM Provider configuration
+	LLMProvider    string // "copilot" or "openai" (default: copilot)
+	OpenAIAPIKey   string
+	OpenAIBaseURL  string
+	OpenAIModel    string
 }
 
 // Load loads configuration from environment variables
@@ -60,6 +65,19 @@ func Load() *Config {
 		}
 	}
 
+	// LLM Provider config
+	llmProvider := os.Getenv("LLM_PROVIDER")
+	if llmProvider == "" {
+		llmProvider = "copilot"
+	}
+
+	openAIAPIKey := os.Getenv("OPENAI_API_KEY")
+	openAIBaseURL := os.Getenv("OPENAI_BASE_URL")
+	openAIModel := os.Getenv("OPENAI_MODEL")
+	if openAIModel == "" {
+		openAIModel = "gpt-4"
+	}
+
 	return &Config{
 		Port:             port,
 		GinMode:          ginMode,
@@ -73,6 +91,10 @@ func Load() *Config {
 		ReadTimeout:      15 * time.Second,
 		WriteTimeout:     15 * time.Second,
 		IdleTimeout:      60 * time.Second,
+		LLMProvider:      llmProvider,
+		OpenAIAPIKey:     openAIAPIKey,
+		OpenAIBaseURL:    openAIBaseURL,
+		OpenAIModel:      openAIModel,
 	}
 }
 

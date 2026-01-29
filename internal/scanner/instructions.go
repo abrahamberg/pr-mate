@@ -275,6 +275,28 @@ func (r *InstructionsReader) ParseScanDirective(content string) []string {
 
 // RemoveScanDirective removes @scan from content after processing
 func (r *InstructionsReader) RemoveScanDirective(content string) string {
-	// Replace @scan with empty to mark as processed
-	return strings.Replace(content, "@scan", "@scanned", 1)
+	// Only replace @scan if it's not already @scanned
+	// Check for @scan that is NOT followed by 'n' (which would be @scanned)
+	result := content
+	idx := 0
+	for {
+		pos := strings.Index(result[idx:], "@scan")
+		if pos == -1 {
+			break
+		}
+		absolutePos := idx + pos
+		afterScan := absolutePos + len("@scan")
+		
+		// Check if this is @scanned (followed by 'n')
+		if afterScan < len(result) && result[afterScan] == 'n' {
+			// Skip this occurrence, it's already @scanned
+			idx = afterScan
+			continue
+		}
+		
+		// Replace @scan with @scanned
+		result = result[:absolutePos] + "@scanned" + result[afterScan:]
+		break // Only replace first occurrence
+	}
+	return result
 }

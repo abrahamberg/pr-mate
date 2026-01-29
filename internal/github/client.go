@@ -139,3 +139,290 @@ func ParseRepoFullName(fullName string) (owner, repo string, err error) {
 	}
 	return parts[0], parts[1], nil
 }
+
+// PullRequest represents essential PR details
+type PullRequest struct {
+	Number    int
+	Title     string
+	Body      string
+	State     string
+	HeadSHA   string
+	HeadRef   string
+	BaseSHA   string
+	BaseRef   string
+	Mergeable bool
+}
+
+// GetPullRequest fetches full PR details
+func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, prNumber int) (*PullRequest, error) {
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, repo, prNumber)
+	if err != nil {
+		return nil, fmt.Errorf("get pull request: %w", err)
+	}
+
+	return &PullRequest{
+		Number:    pr.GetNumber(),
+		Title:     pr.GetTitle(),
+		Body:      pr.GetBody(),
+		State:     pr.GetState(),
+		HeadSHA:   pr.GetHead().GetSHA(),
+		HeadRef:   pr.GetHead().GetRef(),
+		BaseSHA:   pr.GetBase().GetSHA(),
+		BaseRef:   pr.GetBase().GetRef(),
+		Mergeable: pr.GetMergeable(),
+	}, nil
+}
+
+// Commit represents a commit in a PR
+type Commit struct {
+	SHA     string
+	Message string
+	Author  string
+}
+
+// ListPRCommits lists all commits in a PR
+func (c *Client) ListPRCommits(ctx context.Context, owner, repo string, prNumber int) ([]Commit, error) {
+	opts := &github.ListOptions{PerPage: 100}
+	var allCommits []Commit
+
+	for {
+		commits, resp, err := c.client.PullRequests.ListCommits(ctx, owner, repo, prNumber, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list pr commits: %w", err)
+		}
+
+		for _, c := range commits {
+			allCommits = append(allCommits, Commit{
+				SHA:     c.GetSHA(),
+				Message: c.GetCommit().GetMessage(),
+				Author:  c.GetCommit().GetAuthor().GetName(),
+			})
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return allCommits, nil
+}
+
+// ReviewComment represents a review comment on a specific line
+type ReviewComment struct {
+	ID        int64
+	Path      string
+	Line      int
+	Side      string // LEFT or RIGHT
+	Body      string
+	CommitID  string
+	CreatedAt string
+}
+
+// ListReviewComments lists all review comments on a PR
+func (c *Client) ListReviewComments(ctx context.Context, owner, repo string, prNumber int) ([]ReviewComment, error) {
+	opts := &github.PullRequestListCommentsOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+	var allComments []ReviewComment
+
+	for {
+		comments, resp, err := c.client.PullRequests.ListComments(ctx, owner, repo, prNumber, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list review comments: %w", err)
+		}
+
+		for _, c := range comments {
+			allComments = append(allComments, ReviewComment{
+				ID:        c.GetID(),
+				Path:      c.GetPath(),
+				Line:      c.GetLine(),
+				Side:      c.GetSide(),
+				Body:      c.GetBody(),
+				CommitID:  c.GetCommitID(),
+				CreatedAt: c.GetCreatedAt().String(),
+			})
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return allComments, nil
+}
+
+// DraftReviewComment represents a comment to be added in a review
+type DraftReviewComment struct {
+	Path string
+	Line int
+	Side string // LEFT or RIGHT (default RIGHT for new file)
+	Body string
+}
+
+// CreatePullRequestReview creates a review with inline comments
+func (c *Client) CreatePullRequestReview(ctx context.Context, owner, repo string, prNumber int, commitID string, event string, body string, comments []DraftReviewComment) error {
+	reviewComments := make([]*github.DraftReviewComment, len(comments))
+	for i, c := range comments {
+		side := c.Side
+		if side == "" {
+			side = "RIGHT"
+		}
+		reviewComments[i] = &github.DraftReviewComment{
+			Path: github.Ptr(c.Path),
+			Line: github.Ptr(c.Line),
+			Side: github.Ptr(side),
+			Body: github.Ptr(c.Body),
+		}
+	}
+
+	review := &github.PullRequestReviewRequest{
+		CommitID: github.Ptr(commitID),
+		Body:     github.Ptr(body),
+		Event:    github.Ptr(event), // APPROVE, REQUEST_CHANGES, COMMENT
+		Comments: reviewComments,
+	}
+
+	_, _, err := c.client.PullRequests.CreateReview(ctx, owner, repo, prNumber, review)
+	if err != nil {
+		return fmt.Errorf("create pull request review: %w", err)
+	}
+
+	return nil
+}
+
+// ListPRComments lists all issue-level comments on a PR
+func (c *Client) ListPRComments(ctx context.Context, owner, repo string, prNumber int) ([]string, error) {
+	opts := &github.IssueListCommentsOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+	var bodies []string
+
+	for {
+		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repo, prNumber, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list pr comments: %w", err)
+		}
+
+		for _, c := range comments {
+			bodies = append(bodies, c.GetBody())
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+
+	return bodies, nil
+}
+
+// ParsePatchHunks parses a patch to extract line number mappings
+// Returns a map from new file line number to diff position (for review comments)
+type PatchHunk struct {
+	OldStart int
+	OldLines int
+	NewStart int
+	NewLines int
+	Lines    []PatchLine
+}
+
+type PatchLine struct {
+	Type       string // "add", "remove", "context"
+	Content    string
+	OldLineNo  int
+	NewLineNo  int
+	DiffPos    int // Position in the diff (1-indexed)
+}
+
+// ParsePatch parses a unified diff patch into structured hunks
+func ParsePatch(patch string) []PatchHunk {
+	if patch == "" {
+		return nil
+	}
+
+	hunks := make([]PatchHunk, 0)
+	lines := strings.Split(patch, "\n")
+
+	var currentHunk *PatchHunk
+	diffPos := 0
+	oldLine := 0
+	newLine := 0
+
+	for _, line := range lines {
+		diffPos++
+
+		// Parse hunk header: @@ -oldStart,oldLines +newStart,newLines @@
+		if strings.HasPrefix(line, "@@") {
+			if currentHunk != nil {
+				hunks = append(hunks, *currentHunk)
+			}
+
+			hunk := PatchHunk{}
+			// Parse the header
+			_, err := fmt.Sscanf(line, "@@ -%d,%d +%d,%d @@",
+				&hunk.OldStart, &hunk.OldLines, &hunk.NewStart, &hunk.NewLines)
+			if err != nil {
+				// Try single line format: @@ -1 +1 @@
+				_, _ = fmt.Sscanf(line, "@@ -%d +%d @@", &hunk.OldStart, &hunk.NewStart)
+				hunk.OldLines = 1
+				hunk.NewLines = 1
+			}
+
+			oldLine = hunk.OldStart
+			newLine = hunk.NewStart
+			currentHunk = &hunk
+			continue
+		}
+
+		if currentHunk == nil {
+			continue
+		}
+
+		patchLine := PatchLine{
+			Content: line,
+			DiffPos: diffPos,
+		}
+
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			patchLine.Type = "add"
+			patchLine.NewLineNo = newLine
+			newLine++
+		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			patchLine.Type = "remove"
+			patchLine.OldLineNo = oldLine
+			oldLine++
+		} else {
+			patchLine.Type = "context"
+			patchLine.OldLineNo = oldLine
+			patchLine.NewLineNo = newLine
+			oldLine++
+			newLine++
+		}
+
+		currentHunk.Lines = append(currentHunk.Lines, patchLine)
+	}
+
+	if currentHunk != nil {
+		hunks = append(hunks, *currentHunk)
+	}
+
+	return hunks
+}
+
+// GetNewLineNumbers returns all new/added line numbers from a patch
+func GetNewLineNumbers(patch string) []int {
+	hunks := ParsePatch(patch)
+	lines := make([]int, 0)
+
+	for _, hunk := range hunks {
+		for _, line := range hunk.Lines {
+			if line.Type == "add" {
+				lines = append(lines, line.NewLineNo)
+			}
+		}
+	}
+
+	return lines
+}

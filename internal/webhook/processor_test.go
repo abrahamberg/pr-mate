@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"prmate/internal/review"
 	"prmate/internal/scan"
 )
 
@@ -63,11 +64,30 @@ func (m *MockScanService) CheckForPRMateDirective(content string) bool {
 	return content == "@prmate" || content == "Please @prmate review"
 }
 
+// MockReviewService is a test double for ReviewService
+type MockReviewService struct {
+	reviewCalled bool
+	hasPRMate    bool
+}
+
+func (m *MockReviewService) ReviewPR(ctx context.Context, req review.ReviewRequest) (*review.ReviewResult, error) {
+	m.reviewCalled = true
+	return &review.ReviewResult{
+		FilesReviewed:   1,
+		CommentsPosted:  0,
+		ViolationsFound: 0,
+	}, nil
+}
+
+func (m *MockReviewService) HasPRMateFile(ctx context.Context, owner, repo, ref string) bool {
+	return m.hasPRMate
+}
+
 func TestProcessor_Process_PingEvent(t *testing.T) {
 	mockWorkspace := &MockPRWorkspace{}
 	mockScan := &MockScanService{}
 
-	p := NewProcessor(mockWorkspace, mockScan, nil)
+	p := NewProcessor(mockWorkspace, mockScan, nil, nil)
 
 	payload, _ := json.Marshal(map[string]interface{}{
 		"zen": "Keep it simple, silly",
@@ -87,7 +107,7 @@ func TestProcessor_Process_PROpened(t *testing.T) {
 	mockWorkspace := &MockPRWorkspace{}
 	mockScan := &MockScanService{}
 
-	p := NewProcessor(mockWorkspace, mockScan, nil)
+	p := NewProcessor(mockWorkspace, mockScan, nil, nil)
 
 	payload, _ := json.Marshal(map[string]interface{}{
 		"action": "opened",
@@ -117,7 +137,7 @@ func TestProcessor_Process_PRClosed(t *testing.T) {
 	mockWorkspace := &MockPRWorkspace{}
 	mockScan := &MockScanService{}
 
-	p := NewProcessor(mockWorkspace, mockScan, nil)
+	p := NewProcessor(mockWorkspace, mockScan, nil, nil)
 
 	payload, _ := json.Marshal(map[string]interface{}{
 		"action": "closed",
@@ -144,7 +164,7 @@ func TestProcessor_Process_PRClosed(t *testing.T) {
 }
 
 func TestProcessor_Process_NilWorkspace(t *testing.T) {
-	p := NewProcessor(nil, nil, nil)
+	p := NewProcessor(nil, nil, nil, nil)
 
 	payload, _ := json.Marshal(map[string]interface{}{
 		"action": "opened",
@@ -160,7 +180,7 @@ func TestProcessor_Process_UnknownEventType(t *testing.T) {
 	mockWorkspace := &MockPRWorkspace{}
 	mockScan := &MockScanService{}
 
-	p := NewProcessor(mockWorkspace, mockScan, nil)
+	p := NewProcessor(mockWorkspace, mockScan, nil, nil)
 
 	payload, _ := json.Marshal(map[string]interface{}{})
 
@@ -178,7 +198,7 @@ func TestProcessor_Process_WithScanDirective(t *testing.T) {
 		externalRepos:    []string{"org/external-repo"},
 	}
 
-	p := NewProcessor(mockWorkspace, mockScan, nil)
+	p := NewProcessor(mockWorkspace, mockScan, nil, nil)
 
 	payload, _ := json.Marshal(map[string]interface{}{
 		"action": "opened",
@@ -211,13 +231,17 @@ func TestProcessor_Process_WithScanDirective(t *testing.T) {
 func TestNewProcessor(t *testing.T) {
 	mockWorkspace := &MockPRWorkspace{}
 	mockScan := &MockScanService{}
+	mockReview := &MockReviewService{}
 
-	p := NewProcessor(mockWorkspace, mockScan, nil)
+	p := NewProcessor(mockWorkspace, mockScan, mockReview, nil)
 
 	if p.prWorkspace != mockWorkspace {
 		t.Error("prWorkspace not set correctly")
 	}
 	if p.scanService != mockScan {
 		t.Error("scanService not set correctly")
+	}
+	if p.reviewService != mockReview {
+		t.Error("reviewService not set correctly")
 	}
 }

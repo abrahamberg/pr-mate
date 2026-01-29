@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-github/v82/github"
 
 	ghclient "prmate/internal/github"
+	"prmate/internal/review"
 	"prmate/internal/scan"
 )
 
@@ -24,17 +25,25 @@ type ScanService interface {
 	CheckForPRMateDirective(content string) bool
 }
 
-type Processor struct {
-	prWorkspace  PRWorkspace
-	scanService  ScanService
-	githubClient *ghclient.Client
+// ReviewService defines the interface for PR reviews
+type ReviewService interface {
+	ReviewPR(ctx context.Context, req review.ReviewRequest) (*review.ReviewResult, error)
+	HasPRMateFile(ctx context.Context, owner, repo, ref string) bool
 }
 
-func NewProcessor(prWorkspace PRWorkspace, scanService ScanService, githubClient *ghclient.Client) *Processor {
+type Processor struct {
+	prWorkspace   PRWorkspace
+	scanService   ScanService
+	reviewService ReviewService
+	githubClient  *ghclient.Client
+}
+
+func NewProcessor(prWorkspace PRWorkspace, scanService ScanService, reviewService ReviewService, githubClient *ghclient.Client) *Processor {
 	return &Processor{
-		prWorkspace:  prWorkspace,
-		scanService:  scanService,
-		githubClient: githubClient,
+		prWorkspace:   prWorkspace,
+		scanService:   scanService,
+		reviewService: reviewService,
+		githubClient:  githubClient,
 	}
 }
 
@@ -83,6 +92,14 @@ func (p *Processor) handlePullRequest(ctx context.Context, e *github.PullRequest
 		if p.scanService != nil {
 			if err := p.checkAndProcessScan(ctx, owner, repo, prNumber, branch); err != nil {
 				log.Printf("scan processing failed: %v", err)
+				// Don't fail the webhook, just log
+			}
+		}
+
+		// After scan (or if .prmate.md already exists), run the review
+		if p.reviewService != nil {
+			if err := p.runPRReview(ctx, owner, repo, prNumber, branch); err != nil {
+				log.Printf("review processing failed: %v", err)
 				// Don't fail the webhook, just log
 			}
 		}
@@ -175,4 +192,44 @@ func (p *Processor) handleIssueComment(ctx context.Context, e *github.IssueComme
 
 	// Check for @scan directive and process
 	return p.checkAndProcessScan(ctx, owner, repo, prNumber, branch)
+}
+
+// runPRReview performs a PR review if .prmate.md exists
+func (p *Processor) runPRReview(ctx context.Context, owner, repo string, prNumber int, branch string) error {
+	// Check if .prmate.md exists
+	if !p.reviewService.HasPRMateFile(ctx, owner, repo, branch) {
+		log.Printf("No .prmate.md found for %s/%s, skipping review", owner, repo)
+		return nil
+	}
+
+	// Get PR details for the review
+	pr, err := p.githubClient.GetPullRequest(ctx, owner, repo, prNumber)
+	if err != nil {
+		return fmt.Errorf("get pull request: %w", err)
+	}
+
+	log.Printf("Starting PR review for %s/%s PR #%d (commit: %s)", owner, repo, prNumber, pr.HeadSHA[:7])
+
+	req := review.ReviewRequest{
+		Owner:    owner,
+		Repo:     repo,
+		PRNumber: prNumber,
+		HeadSHA:  pr.HeadSHA,
+		HeadRef:  pr.HeadRef,
+		BaseSHA:  pr.BaseSHA,
+	}
+
+	result, err := p.reviewService.ReviewPR(ctx, req)
+	if err != nil {
+		if p.githubClient != nil {
+			_ = p.githubClient.CreatePRComment(ctx, owner, repo, prNumber,
+				fmt.Sprintf("❌ PRMate review failed: %v", err))
+		}
+		return fmt.Errorf("review pr: %w", err)
+	}
+
+	log.Printf("Review completed for %s/%s PR #%d: %d files reviewed, %d issues found",
+		owner, repo, prNumber, result.FilesReviewed, result.ViolationsFound)
+
+	return nil
 }

@@ -11,23 +11,45 @@ import (
 	"prmate/internal/copilot"
 	"prmate/internal/github"
 	"prmate/internal/handlers"
+	"prmate/internal/llm"
 	"prmate/internal/prworkspace"
+	"prmate/internal/review"
 	"prmate/internal/scan"
 	"prmate/internal/server"
 	"prmate/internal/weather"
 	"prmate/internal/webhook"
 )
 
+// LLMService defines the interface for LLM providers used by the application
+type LLMService interface {
+	GenerateText(prompt string) (string, error)
+	Start() error
+	Stop() error
+}
+
 func main() {
 	// Load configuration
 	cfg := config.Load()
 
-	// Initialize Copilot service
-	copilotSvc := copilot.NewService(cfg.CopilotModel)
-	if err := copilotSvc.Start(); err != nil {
-		log.Fatalf("Failed to start copilot service: %v", err)
+	// Initialize LLM service based on configuration
+	var llmSvc LLMService
+	switch cfg.LLMProvider {
+	case "openai":
+		log.Printf("Using OpenAI LLM provider (model: %s)", cfg.OpenAIModel)
+		llmSvc = llm.NewOpenAIProvider(llm.OpenAIConfig{
+			APIKey:  cfg.OpenAIAPIKey,
+			BaseURL: cfg.OpenAIBaseURL,
+			Model:   cfg.OpenAIModel,
+		})
+	default:
+		log.Printf("Using Copilot LLM provider (model: %s)", cfg.CopilotModel)
+		llmSvc = copilot.NewService(cfg.CopilotModel)
 	}
-	defer copilotSvc.Stop()
+
+	if err := llmSvc.Start(); err != nil {
+		log.Fatalf("Failed to start LLM service: %v", err)
+	}
+	defer llmSvc.Stop()
 
 	// Initialize GitHub client
 	githubClient := github.NewClient(cfg.GitHubToken)
@@ -36,12 +58,13 @@ func main() {
 	weatherSvc := weather.NewService()
 	prWorkspaceMgr := prworkspace.NewManager(cfg.WorkBaseDir)
 	scanSvc := scan.NewService(githubClient)
-	webhookProc := webhook.NewProcessor(prWorkspaceMgr, scanSvc, githubClient)
+	reviewSvc := review.NewService(githubClient, llmSvc)
+	webhookProc := webhook.NewProcessor(prWorkspaceMgr, scanSvc, reviewSvc, githubClient)
 	webhookAsync := webhook.NewAsyncProcessor(webhookProc, webhook.AsyncConfig{QueueSize: cfg.WebhookQueueSize, Workers: cfg.WebhookWorkers})
 
 	// Setup HTTP server
 	srv := server.NewServer(cfg)
-	handler := handlers.NewHandler(copilotSvc, weatherSvc, webhookAsync, cfg.WebhookSecret)
+	handler := handlers.NewHandler(llmSvc, weatherSvc, webhookAsync, cfg.WebhookSecret)
 
 	// Register routes
 	srv.Router().GET("/health", handler.Health)
